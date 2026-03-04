@@ -123,6 +123,42 @@ button:disabled {
   gap: 8px;
 }
 
+/* Thin vertical separator inside the header actions row */
+.header-separator {
+  width: 1px;
+  height: 18px;
+  background: #d8d8d8;
+  flex-shrink: 0;
+}
+
+/* Zoom controls group */
+.zoom-controls {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.zoom-label {
+  min-width: 32px;
+  text-align: center;
+  font-size: 0.72rem;
+  color: #666;
+  user-select: none;
+}
+
+.zoom-btn {
+  padding: 2px 6px !important;
+  font-size: 0.8rem !important;
+  min-width: 24px;
+  text-align: center;
+}
+
+.zoom-btn--active {
+  background: #e8f0fe !important;
+  border-color: #1a73e8 !important;
+  color: #1a73e8 !important;
+}
+
 /* Small button living inside a panel header */
 .panel-btn {
   padding: 2px 10px;
@@ -155,7 +191,15 @@ button:disabled {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 0;
+  gap: 4px;
+}
+
+/* Grid / wrap layout mode */
+.page-list--wrap {
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: center;
 }
 
 .empty-hint {
@@ -181,9 +225,10 @@ button:disabled {
   cursor: pointer;
   user-select: none;
   transition: border-color 0.1s, background 0.1s, box-shadow 0.1s;
-  max-width: 210px;
-  width: 100%;
-  margin-bottom: 4px;
+  /* Width driven by --thumb-w CSS variable set inline on .page-list */
+  width: var(--thumb-w, 210px);
+  max-width: var(--thumb-w, 210px);
+  flex-shrink: 0;
 }
 
 .thumb img {
@@ -276,7 +321,6 @@ button:disabled {
   align-items: center;
   justify-content: center;
   width: 100%;
-  max-width: 240px;
   min-height: 32px;
   border: 2px solid #1a73e8;
   border-radius: 4px;

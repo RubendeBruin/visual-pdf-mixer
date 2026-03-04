@@ -5,6 +5,12 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { PageEntry, buildMergedPdf, loadPdfPages } from "./pdfUtils";
 
 type Panel = "main" | "src";
+type LayoutMode = "column" | "wrap";
+
+const BASE_PX   = 210;   // thumbnail base width in pixels at 100 %
+const ZOOM_STEP = 25;
+const ZOOM_MIN  = 25;
+const ZOOM_MAX  = 400;
 
 // ---------------------------------------------------------------------------
 // Pointer-event drag state (module-level - always readable from DOM handlers)
@@ -31,6 +37,14 @@ export default function App() {
   const [loading, setLoading] = useState<Panel | null>(null);
   const [mainFilePath, setMainFilePath] = useState<string | null>(null);
 
+  // Per-panel view options
+  const [mainZoom, setMainZoom] = useState(100);
+  const [srcZoom,  setSrcZoom]  = useState(100);
+  const [mainFit,  setMainFit]  = useState(false);
+  const [srcFit,   setSrcFit]   = useState(false);
+  const [mainLayout, setMainLayout] = useState<LayoutMode>("column");
+  const [srcLayout,  setSrcLayout]  = useState<LayoutMode>("column");
+
   // Mirrors of state readable from async/event handlers without stale closures
   const srcPagesRef = useRef<PageEntry[]>([]);
   srcPagesRef.current = srcPages;
@@ -43,7 +57,7 @@ export default function App() {
 
   const mainListRef = useRef<HTMLDivElement>(null);
   const lastMainIdx = useRef<number>(-1);
-  const lastSrcIdx = useRef<number>(-1);
+  const lastSrcIdx  = useRef<number>(-1);
 
   // -------------------------------------------------------------------------
   // Helpers
@@ -215,8 +229,7 @@ export default function App() {
   };
 
   // -------------------------------------------------------------------------
-  // OS file-drop via Tauri window event (WebView2 never populates
-  // dataTransfer.files so the React onDrop handler is useless on Windows)
+  // OS file-drop via Tauri window event
   // -------------------------------------------------------------------------
   useEffect(() => {
     const unlistenPromise = getCurrentWindow().onDragDropEvent(async (event) => {
@@ -232,7 +245,7 @@ export default function App() {
   }, []);
 
   // -------------------------------------------------------------------------
-  // Drag-over handler (cursor feedback only; actual drop is via onDragDropEvent)
+  // Drag-over handler (cursor feedback only)
   // -------------------------------------------------------------------------
   const handlePanelFileDrag = (e: React.DragEvent) => {
     if (_drag) return;
@@ -307,6 +320,21 @@ export default function App() {
     setMainSelected(new Set());
   };
 
+  // -------------------------------------------------------------------------
+  // Zoom helpers
+  // -------------------------------------------------------------------------
+  const zoomIn  = (setZoom: React.Dispatch<React.SetStateAction<number>>, setFit: (v: boolean) => void) =>
+    () => { setZoom(z => Math.min(ZOOM_MAX, z + ZOOM_STEP)); setFit(false); };
+  const zoomOut = (setZoom: React.Dispatch<React.SetStateAction<number>>, setFit: (v: boolean) => void) =>
+    () => { setZoom(z => Math.max(ZOOM_MIN, z - ZOOM_STEP)); setFit(false); };
+  const toggleFit = (setFit: React.Dispatch<React.SetStateAction<boolean>>) =>
+    () => setFit(f => !f);
+  const toggleLayout = (setLayout: React.Dispatch<React.SetStateAction<LayoutMode>>) =>
+    () => setLayout(l => l === "column" ? "wrap" : "column");
+
+  const thumbStyle = (zoom: number, fit: boolean): React.CSSProperties =>
+    ({ "--thumb-w": fit ? "calc(100% - 16px)" : `${BASE_PX * zoom / 100}px` } as React.CSSProperties);
+
   const dragCount = _drag?.ids.length ?? srcSelected.size ?? 1;
   const busy = loading !== null || saving;
   const mainLabel = mainFilePath ? mainFilePath.split(/[/\\]/).pop() : "Main Document";
@@ -317,18 +345,23 @@ export default function App() {
   return (
     <div className="app">
       <div className="panels">
+
         {/* LEFT - main document */}
-        <div
-          className="panel"
-          onDragOver={handlePanelFileDrag}
-          onDragEnter={handlePanelFileDrag}
-        >
+        <div className="panel" onDragOver={handlePanelFileDrag} onDragEnter={handlePanelFileDrag}>
           <div className="panel-header">
             <span className="panel-title">{mainLabel}</span>
             <div className="panel-header-actions">
               <span className="page-count">
                 {mainPages.length} page{mainPages.length !== 1 ? "s" : ""}
               </span>
+              <ZoomControls
+                zoom={mainZoom} fit={mainFit} layout={mainLayout}
+                onZoomIn={zoomIn(setMainZoom, setMainFit)}
+                onZoomOut={zoomOut(setMainZoom, setMainFit)}
+                onToggleFit={toggleFit(setMainFit)}
+                onToggleLayout={toggleLayout(setMainLayout)}
+              />
+              <div className="header-separator" />
               <button className="panel-btn" onClick={handleOpenMain} disabled={busy}>
                 {loading === "main" ? "Opening..." : "Open"}
               </button>
@@ -353,7 +386,12 @@ export default function App() {
 
           <div
             ref={mainListRef}
-            className={`page-list${isDragging ? " panel-drop-active" : ""}`}
+            className={[
+              "page-list",
+              isDragging ? "panel-drop-active" : "",
+              mainLayout === "wrap" ? "page-list--wrap" : "",
+            ].filter(Boolean).join(" ")}
+            style={thumbStyle(mainZoom, mainFit)}
             data-panel="main"
           >
             {mainPages.length === 0 ? (
@@ -383,24 +421,35 @@ export default function App() {
         </div>
 
         {/* RIGHT - source document */}
-        <div
-          className="panel source-panel"
-          onDragOver={handlePanelFileDrag}
-          onDragEnter={handlePanelFileDrag}
-        >
+        <div className="panel source-panel" onDragOver={handlePanelFileDrag} onDragEnter={handlePanelFileDrag}>
           <div className="panel-header">
             <span className="panel-title">Source Document</span>
             <div className="panel-header-actions">
               <span className="page-count">
                 {srcPages.length} page{srcPages.length !== 1 ? "s" : ""}
               </span>
+              <ZoomControls
+                zoom={srcZoom} fit={srcFit} layout={srcLayout}
+                onZoomIn={zoomIn(setSrcZoom, setSrcFit)}
+                onZoomOut={zoomOut(setSrcZoom, setSrcFit)}
+                onToggleFit={toggleFit(setSrcFit)}
+                onToggleLayout={toggleLayout(setSrcLayout)}
+              />
+              <div className="header-separator" />
               <button className="panel-btn" onClick={handleOpenSrc} disabled={busy}>
                 {loading === "src" ? "Opening..." : "Open"}
               </button>
             </div>
           </div>
 
-          <div className="page-list" data-panel="src">
+          <div
+            className={[
+              "page-list",
+              srcLayout === "wrap" ? "page-list--wrap" : "",
+            ].filter(Boolean).join(" ")}
+            style={thumbStyle(srcZoom, srcFit)}
+            data-panel="src"
+          >
             {srcPages.length === 0 ? (
               <p className="empty-hint">Open a PDF or drag a file here</p>
             ) : (
@@ -430,7 +479,41 @@ export default function App() {
             </div>
           )}
         </div>
+
       </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// ZoomControls
+// ---------------------------------------------------------------------------
+interface ZoomControlsProps {
+  zoom: number;
+  fit: boolean;
+  layout: LayoutMode;
+  onZoomIn: () => void;
+  onZoomOut: () => void;
+  onToggleFit: () => void;
+  onToggleLayout: () => void;
+}
+
+function ZoomControls({ zoom, fit, layout, onZoomIn, onZoomOut, onToggleFit, onToggleLayout }: ZoomControlsProps) {
+  return (
+    <div className="zoom-controls">
+      <button className="panel-btn zoom-btn" onClick={onZoomOut} title="Zoom out" disabled={!fit && zoom <= ZOOM_MIN}>−</button>
+      <span className="zoom-label">{fit ? "fit" : `${zoom}%`}</span>
+      <button className="panel-btn zoom-btn" onClick={onZoomIn} title="Zoom in" disabled={!fit && zoom >= ZOOM_MAX}>+</button>
+      <button
+        className={`panel-btn zoom-btn${fit ? " zoom-btn--active" : ""}`}
+        onClick={onToggleFit}
+        title="Fit to pane width"
+      >↔</button>
+      <button
+        className="panel-btn zoom-btn"
+        onClick={onToggleLayout}
+        title={layout === "column" ? "Switch to grid layout" : "Switch to list layout"}
+      >{layout === "column" ? "⊞" : "☰"}</button>
     </div>
   );
 }
