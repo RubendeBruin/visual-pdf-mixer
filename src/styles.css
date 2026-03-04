@@ -1,5 +1,5 @@
-/* ===================================================================
-   PDF Mixer — global styles
+﻿/* ===================================================================
+   PDF Mixer -- light theme global styles
    =================================================================== */
 
 *, *::before, *::after {
@@ -13,8 +13,8 @@ html, body {
   overflow: hidden;
   font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   font-size: 14px;
-  background: #1a1a1a;
-  color: #ddd;
+  background: #f0f0f0;
+  color: #1a1a1a;
 }
 
 #root {
@@ -32,44 +32,31 @@ html, body {
 }
 
 /* ===================================================================
-   Toolbar
+   Two-panel layout
    =================================================================== */
 
-.toolbar {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 16px;
-  background: #252525;
-  border-bottom: 1px solid #383838;
-  flex-shrink: 0;
-  min-height: 46px;
-}
+/* ===================================================================
+   Buttons
+   =================================================================== */
 
-.app-title {
-  font-weight: 700;
-  font-size: 1rem;
-  color: #e8e8e8;
-  letter-spacing: 0.02em;
-  margin-right: 6px;
-  white-space: nowrap;
-}
-
-/* Generic button */
 button {
   padding: 5px 14px;
-  border: 1px solid #444;
+  border: 1px solid #c8c8c8;
   border-radius: 5px;
-  background: #333;
-  color: #ddd;
+  background: #f8f8f8;
+  color: #2a2a2a;
   cursor: pointer;
   font-size: 0.8rem;
   white-space: nowrap;
-  transition: background 0.12s, border-color 0.12s;
+  line-height: 1.5;
+  transition: background 0.1s, border-color 0.1s, box-shadow 0.1s;
 }
 button:hover:not(:disabled) {
-  background: #444;
-  border-color: #555;
+  background: #eeeeee;
+  border-color: #aaaaaa;
+}
+button:active:not(:disabled) {
+  background: #e4e4e4;
 }
 button:disabled {
   opacity: 0.45;
@@ -77,24 +64,13 @@ button:disabled {
 }
 
 .delete-btn {
-  background: #5c2222;
-  border-color: #7a3030;
-  color: #f0a0a0;
+  background: #fff0f0;
+  border-color: #f5b8b8;
+  color: #c0392b;
 }
 .delete-btn:hover:not(:disabled) {
-  background: #6e2929;
-}
-
-.save-btn {
-  margin-left: auto;
-  background: #0a5ea8;
-  border-color: #1273c2;
-  color: #fff;
-  font-weight: 600;
-  padding: 5px 20px;
-}
-.save-btn:hover:not(:disabled) {
-  background: #1070c4;
+  background: #ffe5e5;
+  border-color: #e87070;
 }
 
 /* ===================================================================
@@ -112,11 +88,13 @@ button:disabled {
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  border-right: 1px solid #383838;
+  background: #f8f8f8;
+  border-right: 1px solid #d0d0d0;
 }
 
 .panel.source-panel {
   border-right: none;
+  background: #f5f5f5;
 }
 
 /* Panel header bar */
@@ -124,17 +102,46 @@ button:disabled {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 6px 12px;
-  background: #202020;
-  border-bottom: 1px solid #383838;
+  padding: 6px 14px;
+  background: #ffffff;
+  border-bottom: 1px solid #d8d8d8;
   flex-shrink: 0;
-  font-size: 0.78rem;
-  color: #aaa;
+  font-size: 0.8rem;
+  color: #555;
+  font-weight: 500;
 }
 
 .page-count {
   font-variant-numeric: tabular-nums;
-  color: #666;
+  color: #999;
+  font-weight: 400;
+}
+
+.panel-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Small button living inside a panel header */
+.panel-btn {
+  padding: 2px 10px;
+  font-size: 0.75rem;
+  border: 1px solid #c8c8c8;
+  border-radius: 4px;
+  background: #f8f8f8;
+  color: #2a2a2a;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.1s, border-color 0.1s;
+}
+.panel-btn:hover:not(:disabled) {
+  background: #eeeeee;
+  border-color: #aaaaaa;
+}
+.panel-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
 }
 
 /* ===================================================================
@@ -144,7 +151,7 @@ button:disabled {
 .page-list {
   flex: 1;
   overflow-y: auto;
-  padding: 10px 8px;
+  padding: 12px 8px;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -153,11 +160,12 @@ button:disabled {
 
 .empty-hint {
   margin-top: 60px;
-  color: #484848;
+  color: #bbb;
   font-size: 0.85rem;
   text-align: center;
-  line-height: 1.6;
+  line-height: 1.7;
   pointer-events: none;
+  user-select: none;
 }
 
 /* ===================================================================
@@ -167,14 +175,15 @@ button:disabled {
 .thumb {
   position: relative;
   padding: 5px;
-  border: 2px solid transparent;
+  border: 2px solid #e0e0e0;
   border-radius: 5px;
-  background: #282828;
+  background: #ffffff;
   cursor: pointer;
   user-select: none;
   transition: border-color 0.1s, background 0.1s, box-shadow 0.1s;
   max-width: 210px;
   width: 100%;
+  margin-bottom: 4px;
 }
 
 .thumb img {
@@ -185,14 +194,15 @@ button:disabled {
 }
 
 .thumb:hover:not(.selected) {
-  border-color: #4a4a4a;
-  background: #303030;
+  border-color: #b0b8c8;
+  background: #f4f7ff;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.08);
 }
 
 .thumb.selected {
-  border-color: #1a7fc7;
-  background: #1a3652;
-  box-shadow: 0 0 0 2px rgba(26, 127, 199, 0.3);
+  border-color: #1a73e8;
+  background: #e8f0fe;
+  box-shadow: 0 0 0 2px rgba(26, 115, 232, 0.25);
 }
 
 .thumb.draggable {
@@ -207,8 +217,8 @@ button:disabled {
   position: absolute;
   bottom: 9px;
   right: 9px;
-  background: rgba(0, 0, 0, 0.6);
-  color: #bbb;
+  background: rgba(0, 0, 0, 0.35);
+  color: #fff;
   font-size: 0.68rem;
   padding: 1px 6px;
   border-radius: 3px;
@@ -221,7 +231,7 @@ button:disabled {
   position: absolute;
   top: 9px;
   right: 9px;
-  background: #1a7fc7;
+  background: #1a73e8;
   color: #fff;
   font-size: 0.65rem;
   font-weight: 600;
@@ -231,23 +241,22 @@ button:disabled {
 }
 
 /* ===================================================================
-   Pointer-drag ghost — floating label that follows the cursor
+   Pointer-drag ghost -- floating label that follows the cursor
    =================================================================== */
 
 .drag-ghost {
   position: fixed;
   z-index: 9999;
   pointer-events: none;
-  background: #00e676;
-  color: #000;
+  background: #1a73e8;
+  color: #fff;
   font-size: 0.78rem;
   font-weight: 700;
   padding: 4px 12px;
   border-radius: 20px;
-  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.5);
+  box-shadow: 0 2px 10px rgba(0,0,0,0.25);
   white-space: nowrap;
   user-select: none;
-  transform: translate(0, 0); /* force compositing layer */
 }
 
 /* ===================================================================
@@ -255,13 +264,13 @@ button:disabled {
    =================================================================== */
 
 .page-list.panel-drop-active {
-  outline: 2px dashed rgba(0, 200, 100, 0.45);
+  outline: 2px dashed rgba(26, 115, 232, 0.5);
   outline-offset: -4px;
   border-radius: 4px;
-  background: rgba(0, 200, 100, 0.04);
+  background: rgba(26, 115, 232, 0.04);
 }
 
-/* Insertion indicator — bright green bar with label */
+/* Insertion indicator -- blue bar with label */
 .insert-indicator {
   display: flex;
   align-items: center;
@@ -269,10 +278,10 @@ button:disabled {
   width: 100%;
   max-width: 240px;
   min-height: 32px;
-  border: 2px solid #00e676;
+  border: 2px solid #1a73e8;
   border-radius: 4px;
-  background: rgba(0, 230, 118, 0.12);
-  box-shadow: 0 0 10px rgba(0, 230, 118, 0.5);
+  background: rgba(26, 115, 232, 0.08);
+  box-shadow: 0 0 8px rgba(26, 115, 232, 0.3);
   flex-shrink: 0;
   margin: 4px 0;
   pointer-events: none;
@@ -281,7 +290,7 @@ button:disabled {
 .insert-indicator__label {
   font-size: 0.75rem;
   font-weight: 700;
-  color: #00e676;
+  color: #1a73e8;
   letter-spacing: 0.03em;
   text-transform: uppercase;
   white-space: nowrap;
@@ -289,8 +298,7 @@ button:disabled {
 
 /* Empty-panel hint during drag */
 .empty-hint--drag {
-  color: #00e676;
-  font-size: 0.85rem;
+  color: #1a73e8;
 }
 
 /* ===================================================================
@@ -300,16 +308,16 @@ button:disabled {
 .src-hint {
   padding: 6px 12px;
   font-size: 0.75rem;
-  color: #888;
-  background: #202020;
-  border-top: 1px solid #383838;
+  color: #777;
+  background: #ffffff;
+  border-top: 1px solid #d8d8d8;
   text-align: center;
   flex-shrink: 0;
   font-style: italic;
 }
 
 /* ===================================================================
-   Scrollbar styling (optional — Chromium / WebView2)
+   Scrollbar styling (Chromium / WebView2)
    =================================================================== */
 
 .page-list::-webkit-scrollbar {
@@ -319,9 +327,9 @@ button:disabled {
   background: transparent;
 }
 .page-list::-webkit-scrollbar-thumb {
-  background: #444;
+  background: #ccc;
   border-radius: 3px;
 }
 .page-list::-webkit-scrollbar-thumb:hover {
-  background: #555;
+  background: #aaa;
 }

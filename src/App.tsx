@@ -1,10 +1,13 @@
-import React, { useCallback, useEffect, useRef, useState } from "react";
+ï»¿import React, { useCallback, useEffect, useRef, useState } from "react";
+import { open as dialogOpen, save as dialogSave, ask } from "@tauri-apps/plugin-dialog";
+import { readFile, writeFile } from "@tauri-apps/plugin-fs";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { PageEntry, buildMergedPdf, loadPdfPages } from "./pdfUtils";
 
 type Panel = "main" | "src";
 
 // ---------------------------------------------------------------------------
-// Pointer-event drag state (module-level — always readable from DOM handlers)
+// Pointer-event drag state (module-level - always readable from DOM handlers)
 // ---------------------------------------------------------------------------
 interface PointerDrag {
   ids: string[];          // page IDs being dragged
@@ -26,6 +29,7 @@ export default function App() {
 
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState<Panel | null>(null);
+  const [mainFilePath, setMainFilePath] = useState<string | null>(null);
 
   // Mirrors of state readable from async/event handlers without stale closures
   const srcPagesRef = useRef<PageEntry[]>([]);
@@ -34,6 +38,8 @@ export default function App() {
   srcSelectedRef.current = srcSelected;
   const mainPagesRef = useRef<PageEntry[]>([]);
   mainPagesRef.current = mainPages;
+  const mainFilePathRef = useRef<string | null>(null);
+  mainFilePathRef.current = mainFilePath;
 
   const mainListRef = useRef<HTMLDivElement>(null);
   const lastMainIdx = useRef<number>(-1);
@@ -61,16 +67,13 @@ export default function App() {
   };
 
   // -------------------------------------------------------------------------
-  // Pointer-event drag — document-level listeners wired once on mount
+  // Pointer-event drag - document-level listeners wired once on mount
   // -------------------------------------------------------------------------
   useEffect(() => {
     const onPointerMove = (e: PointerEvent) => {
       if (!_drag) return;
-
-      // Move the ghost near the cursor
       _drag.ghost.style.left = `${e.clientX + 14}px`;
       _drag.ghost.style.top  = `${e.clientY + 14}px`;
-
       if (isOverMainPanel(e.clientX, e.clientY)) {
         setIsDragging(true);
         setDropIdx(computeInsertionIndex(e.clientY));
@@ -83,23 +86,18 @@ export default function App() {
     const onPointerUp = (e: PointerEvent) => {
       const drag = _drag;
       if (!drag) return;
-
-      // Remove ghost
       drag.ghost.remove();
       _drag = null;
       setIsDragging(false);
-
       if (!isOverMainPanel(e.clientX, e.clientY)) {
         setDropIdx(null);
         return;
       }
-
       const insertAt = computeInsertionIndex(e.clientY);
       const idSet = new Set(drag.ids);
       const toInsert = srcPagesRef.current
         .filter(p => idSet.has(p.id))
         .map(p => ({ ...p, id: crypto.randomUUID() }));
-
       if (toInsert.length) {
         setMainPages(prev => {
           const next = [...prev];
@@ -107,11 +105,9 @@ export default function App() {
           return next;
         });
       }
-
       setDropIdx(null);
     };
 
-    // pointercancel fires when OS grabs the pointer (e.g. alt-tab)
     const onPointerCancel = () => {
       if (_drag) { _drag.ghost.remove(); _drag = null; }
       setIsDragging(false);
@@ -145,56 +141,103 @@ export default function App() {
   }, [mainSelected]);
 
   // -------------------------------------------------------------------------
-  // File pickers
+  // Open files - Tauri dialog + fs
   // -------------------------------------------------------------------------
-  const pickFile = (onBytes: (b: Uint8Array) => void) => {
-    const el = document.createElement("input");
-    el.type = "file";
-    el.accept = ".pdf,application/pdf";
-    el.onchange = async () => {
-      const file = el.files?.[0];
-      if (!file) return;
-      onBytes(new Uint8Array(await file.arrayBuffer()));
-    };
-    el.click();
-  };
-
-  const handleOpenMain = () =>
-    pickFile(async bytes => {
-      setLoading("main");
-      try {
-        setMainPages(await loadPdfPages(bytes));
+  const loadFromPath = async (filePath: string, panel: Panel) => {
+    if (loading !== null) return;
+    setLoading(panel);
+    try {
+      const bytes = await readFile(filePath);
+      const pages = await loadPdfPages(bytes);
+      if (panel === "main") {
+        setMainPages(pages);
         setMainSelected(new Set());
+        setMainFilePath(filePath);
         lastMainIdx.current = -1;
-      } finally { setLoading(null); }
-    });
-
-  const handleOpenSrc = () =>
-    pickFile(async bytes => {
-      setLoading("src");
-      try {
-        setSrcPages(await loadPdfPages(bytes));
+      } else {
+        setSrcPages(pages);
         setSrcSelected(new Set());
         lastSrcIdx.current = -1;
-      } finally { setLoading(null); }
-    });
+      }
+    } catch (err) {
+      console.error("Failed to open PDF:", err);
+    } finally {
+      setLoading(null);
+    }
+  };
+
+  const handleOpenMain = async () => {
+    const path = await dialogOpen({ title: "Open Main PDF", filters: [{ name: "PDF", extensions: ["pdf"] }] });
+    if (path && typeof path === "string") await loadFromPath(path, "main");
+  };
+
+  const handleOpenSrc = async () => {
+    const path = await dialogOpen({ title: "Open Source PDF", filters: [{ name: "PDF", extensions: ["pdf"] }] });
+    if (path && typeof path === "string") await loadFromPath(path, "src");
+  };
 
   // -------------------------------------------------------------------------
-  // Save — reads ref to avoid stale closure over mainPages
+  // Save
   // -------------------------------------------------------------------------
-  const handleSave = async () => {
+  const writePdf = async (path: string) => {
     const pages = mainPagesRef.current;
     if (!pages.length || saving) return;
     setSaving(true);
     try {
       const bytes = await buildMergedPdf(pages);
-      const url = URL.createObjectURL(new Blob([bytes], { type: "application/pdf" }));
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = "merged.pdf";
-      a.click();
-      URL.revokeObjectURL(url);
-    } finally { setSaving(false); }
+      await writeFile(path, bytes);
+    } catch (err) {
+      console.error("Failed to save PDF:", err);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleSave = async () => {
+    const path = mainFilePathRef.current;
+    if (!path) { await handleSaveAs(); return; }
+    const fileName = path.split(/[/\\]/).pop() ?? path;
+    const confirmed = await ask(`Overwrite "${fileName}"?`, { title: "Save", kind: "warning" });
+    if (!confirmed) return;
+    await writePdf(path);
+  };
+
+  const handleSaveAs = async () => {
+    const path = await dialogSave({
+      title: "Save PDF As",
+      filters: [{ name: "PDF", extensions: ["pdf"] }],
+      defaultPath: mainFilePathRef.current ?? "merged.pdf",
+    });
+    if (path) {
+      await writePdf(path);
+      setMainFilePath(path);
+    }
+  };
+
+  // -------------------------------------------------------------------------
+  // OS file-drop via Tauri window event (WebView2 never populates
+  // dataTransfer.files so the React onDrop handler is useless on Windows)
+  // -------------------------------------------------------------------------
+  useEffect(() => {
+    const unlistenPromise = getCurrentWindow().onDragDropEvent(async (event) => {
+      if (event.payload.type !== "drop") return;
+      const { paths, position } = event.payload;
+      const pdfPaths = paths.filter(p => p.toLowerCase().endsWith(".pdf"));
+      if (!pdfPaths.length) return;
+      const panel: Panel = position.x < window.innerWidth / 2 ? "main" : "src";
+      await loadFromPath(pdfPaths[0], panel);
+    });
+    return () => { unlistenPromise.then(fn => fn()); };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // -------------------------------------------------------------------------
+  // Drag-over handler (cursor feedback only; actual drop is via onDragDropEvent)
+  // -------------------------------------------------------------------------
+  const handlePanelFileDrag = (e: React.DragEvent) => {
+    if (_drag) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "copy";
   };
 
   // -------------------------------------------------------------------------
@@ -236,23 +279,16 @@ export default function App() {
   );
 
   // -------------------------------------------------------------------------
-  // Pointer-down on a source thumbnail — starts the drag
+  // Pointer-down on a source thumbnail - starts the drag
   // -------------------------------------------------------------------------
   const handleSrcPointerDown = (e: React.PointerEvent, id: string) => {
-    // Only react to left-button (button 0)
     if (e.button !== 0) return;
-
-    // Prevent implicit pointer capture on the source element so that
-    // pointermove/pointerup bubble to document instead
     (e.target as HTMLElement).releasePointerCapture(e.pointerId);
-
     const sel = srcSelectedRef.current;
     const ids = sel.has(id)
       ? srcPagesRef.current.filter(p => sel.has(p.id)).map(p => p.id)
       : [id];
     if (!sel.has(id)) setSrcSelected(new Set([id]));
-
-    // Build the ghost element
     const count = ids.length;
     const ghost = document.createElement("div");
     ghost.className = "drag-ghost";
@@ -260,12 +296,11 @@ export default function App() {
     ghost.style.left = `${e.clientX + 14}px`;
     ghost.style.top  = `${e.clientY + 14}px`;
     document.body.appendChild(ghost);
-
     _drag = { ids, ghost };
   };
 
   // -------------------------------------------------------------------------
-  // Delete button
+  // Delete selected
   // -------------------------------------------------------------------------
   const handleDeleteSelected = () => {
     setMainPages(prev => prev.filter(p => !mainSelected.has(p.id)));
@@ -273,42 +308,47 @@ export default function App() {
   };
 
   const dragCount = _drag?.ids.length ?? srcSelected.size ?? 1;
+  const busy = loading !== null || saving;
+  const mainLabel = mainFilePath ? mainFilePath.split(/[/\\]/).pop() : "Main Document";
 
   // -------------------------------------------------------------------------
   // Render
   // -------------------------------------------------------------------------
   return (
     <div className="app">
-      <header className="toolbar">
-        <span className="app-title">PDF Mixer</span>
-        <button onClick={handleOpenMain} disabled={loading !== null}>
-          {loading === "main" ? "Loading…" : "Open Main PDF"}
-        </button>
-        <button onClick={handleOpenSrc} disabled={loading !== null}>
-          {loading === "src" ? "Loading…" : "Open Source PDF"}
-        </button>
-        {mainSelected.size > 0 && (
-          <button className="delete-btn" onClick={handleDeleteSelected}>
-            Delete {mainSelected.size} page{mainSelected.size > 1 ? "s" : ""}
-          </button>
-        )}
-        <button
-          className="save-btn"
-          onClick={handleSave}
-          disabled={!mainPages.length || saving}
-        >
-          {saving ? "Saving…" : "Save PDF"}
-        </button>
-      </header>
-
       <div className="panels">
-        {/* LEFT — main document */}
-        <div className="panel">
+        {/* LEFT - main document */}
+        <div
+          className="panel"
+          onDragOver={handlePanelFileDrag}
+          onDragEnter={handlePanelFileDrag}
+        >
           <div className="panel-header">
-            <span>Main Document</span>
-            <span className="page-count">
-              {mainPages.length} page{mainPages.length !== 1 ? "s" : ""}
-            </span>
+            <span className="panel-title">{mainLabel}</span>
+            <div className="panel-header-actions">
+              <span className="page-count">
+                {mainPages.length} page{mainPages.length !== 1 ? "s" : ""}
+              </span>
+              <button className="panel-btn" onClick={handleOpenMain} disabled={busy}>
+                {loading === "main" ? "Opening..." : "Open"}
+              </button>
+              <button
+                className="panel-btn"
+                onClick={handleSave}
+                disabled={!mainPages.length || busy}
+                title={mainFilePath ? `Overwrite ${mainLabel}` : "Save As..."}
+              >
+                {saving ? "Saving..." : "Save"}
+              </button>
+              <button className="panel-btn" onClick={handleSaveAs} disabled={!mainPages.length || busy}>
+                Save As...
+              </button>
+              {mainSelected.size > 0 && (
+                <button className="panel-btn delete-btn" onClick={handleDeleteSelected} disabled={busy}>
+                  Delete {mainSelected.size} page{mainSelected.size > 1 ? "s" : ""}
+                </button>
+              )}
+            </div>
           </div>
 
           <div
@@ -320,7 +360,7 @@ export default function App() {
               <>
                 {dropIdx !== null && <InsertIndicator count={dragCount} />}
                 <p className={`empty-hint${isDragging ? " empty-hint--drag" : ""}`}>
-                  {isDragging ? "Drop pages here" : "Open a PDF to edit"}
+                  {isDragging ? "Drop pages here" : "Open a PDF or drag a file here"}
                 </p>
               </>
             ) : (
@@ -342,18 +382,27 @@ export default function App() {
           </div>
         </div>
 
-        {/* RIGHT — source document */}
-        <div className="panel source-panel">
+        {/* RIGHT - source document */}
+        <div
+          className="panel source-panel"
+          onDragOver={handlePanelFileDrag}
+          onDragEnter={handlePanelFileDrag}
+        >
           <div className="panel-header">
-            <span>Source Document</span>
-            <span className="page-count">
-              {srcPages.length} page{srcPages.length !== 1 ? "s" : ""}
-            </span>
+            <span className="panel-title">Source Document</span>
+            <div className="panel-header-actions">
+              <span className="page-count">
+                {srcPages.length} page{srcPages.length !== 1 ? "s" : ""}
+              </span>
+              <button className="panel-btn" onClick={handleOpenSrc} disabled={busy}>
+                {loading === "src" ? "Opening..." : "Open"}
+              </button>
+            </div>
           </div>
 
           <div className="page-list" data-panel="src">
             {srcPages.length === 0 ? (
-              <p className="empty-hint">Open a source PDF to insert pages</p>
+              <p className="empty-hint">Open a PDF or drag a file here</p>
             ) : (
               srcPages.map((page, i) => (
                 <PageThumb
@@ -377,7 +426,7 @@ export default function App() {
           {srcSelected.size > 0 && (
             <div className="src-hint">
               {srcSelected.size} page{srcSelected.size > 1 ? "s" : ""} selected
-              — drag into the main document
+              &mdash; drag into the main document
             </div>
           )}
         </div>
@@ -418,7 +467,6 @@ function PageThumb({ page, number, selected, draggable, dragHint, onClick, onPoi
       className={`thumb${selected ? " selected" : ""}${draggable ? " draggable" : ""}`}
       onClick={onClick}
       onPointerDown={onPointerDown}
-      // Prevent browser text/image selection during pointer drag
       onDragStart={draggable ? e => e.preventDefault() : undefined}
     >
       <img src={page.thumbnailUrl} alt={`Page ${number}`} draggable={false} />

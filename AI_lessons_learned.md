@@ -313,3 +313,69 @@ target, especially for first-time users. Use a clearly visible, labeled indicato
 - Outline the entire panel with a dashed border while a drag is in progress
 
 This also doubles as a functional confirmation that the drop will actually work.
+---
+
+## 16. `dataTransfer.files` is always empty for OS file drops in WebView2 — use `onDragDropEvent` instead ✅ CONFIRMED WORKING
+
+### What was tried (failed)
+
+Implementing OS-level file drop (dragging a PDF from File Explorer onto a panel)
+using the standard HTML5/React pattern:
+
+```tsx
+const handleDrop = (e: React.DragEvent) => {
+  e.preventDefault();
+  const file = e.dataTransfer.files[0]; // always undefined in WebView2
+  if (!file) return;
+  // ...
+};
+<div onDrop={handleDrop} onDragOver={e => e.preventDefault()} />
+```
+
+The `dragover`/`dragenter` prevention worked (the copy cursor appeared), but
+`dataTransfer.files` was **always empty** by the time the `drop` event fired.
+No file data was ever available to the JavaScript handler.
+
+### Root cause
+
+WebView2 purposely clears `dataTransfer.files` for OS-originated drag operations
+before the JavaScript `drop` event fires. This is the same class of interception
+that blocks HTML5 `dragover`/`drop` for internal drags (see Lesson 5). External
+(OS → WebView2) file drops hit a different interception point but the outcome is
+identical: the Web API delivers no file data.
+
+### ✅ Correct solution: `getCurrentWindow().onDragDropEvent()`
+
+Tauri intercepts the native OS drag-drop event _before_ WebView2 sees it and
+re-emits it as a typed event with real file paths on disk.
+
+```ts
+import { getCurrentWindow } from "@tauri-apps/api/window";
+
+useEffect(() => {
+  const unlisten = getCurrentWindow().onDragDropEvent(async (event) => {
+    if (event.payload.type !== "drop") return;
+    const { paths, position } = event.payload;
+    const pdfPaths = paths.filter(p => p.toLowerCase().endsWith(".pdf"));
+    if (!pdfPaths.length) return;
+    // Use drop X coordinate to route to the correct panel
+    const panel = position.x < window.innerWidth / 2 ? "main" : "src";
+    await loadFromPath(pdfPaths[0], panel);
+  });
+  return () => { unlisten.then(fn => fn()); };
+}, []);
+```
+
+### Key points
+
+- `onDragDropEvent` fires for `"enter"`, `"over"`, and `"drop"` sub-types.
+  Only `"drop"` carries `paths`.
+- `paths` are absolute filesystem paths as strings — pass them to
+  `readFile(path)` from `@tauri-apps/plugin-fs` to get the bytes.
+- The React `onDragOver`/`onDragEnter` handlers (calling `e.preventDefault()`)
+  are still needed to make the browser show the copy cursor on hover — they just
+  cannot be used to receive the drop.
+- Panel routing by X coordinate is simpler than trying to hit-test React refs
+  from outside the component, and accurate enough for a side-by-side layout.
+- **Never rely on `dataTransfer.files` in any Tauri app on Windows** for
+  OS-originated file drops. Use `onDragDropEvent` instead.
