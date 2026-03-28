@@ -1,8 +1,12 @@
 ﻿import React, { useCallback, useEffect, useRef, useState } from "react";
-import { open as dialogOpen, save as dialogSave, ask } from "@tauri-apps/plugin-dialog";
-import { readFile, writeFile } from "@tauri-apps/plugin-fs";
-import { getCurrentWindow } from "@tauri-apps/api/window";
 import { PageEntry, buildMergedPdf, loadPdfPages } from "./pdfUtils";
+import {
+  isTauri,
+  openPdfFile,
+  savePdfFile,
+  overwritePdfFile,
+  confirmDialog,
+} from "./platform";
 
 type Panel = "main" | "src";
 type LayoutMode = "column" | "wrap";
@@ -155,18 +159,23 @@ export default function App() {
   }, [mainSelected]);
 
   // -------------------------------------------------------------------------
-  // Open files - Tauri dialog + fs
+  // Open files - platform-agnostic (Tauri dialog or browser <input>)
   // -------------------------------------------------------------------------
-  const loadFromPath = async (filePath: string, panel: Panel) => {
+
+  /**
+   * Core loader: renders pages from raw bytes and stores them in the
+   * appropriate panel.  `fileIdentifier` may be a full OS path (Tauri) or
+   * just a display name / filename (browser), or null if unknown.
+   */
+  const loadFromBytes = async (bytes: Uint8Array, fileIdentifier: string | null, panel: Panel) => {
     if (loading !== null) return;
     setLoading(panel);
     try {
-      const bytes = await readFile(filePath);
       const pages = await loadPdfPages(bytes);
       if (panel === "main") {
         setMainPages(pages);
         setMainSelected(new Set());
-        setMainFilePath(filePath);
+        setMainFilePath(fileIdentifier);
         lastMainIdx.current = -1;
       } else {
         setSrcPages(pages);
@@ -181,66 +190,110 @@ export default function App() {
   };
 
   const handleOpenMain = async () => {
-    const path = await dialogOpen({ title: "Open Main PDF", filters: [{ name: "PDF", extensions: ["pdf"] }] });
-    if (path && typeof path === "string") await loadFromPath(path, "main");
+    const result = await openPdfFile("Open Main PDF");
+    if (!result) return;
+    // In Tauri the path is the full OS path; in the browser it is just the
+    // filename, but both serve as the label and (in Tauri) as the save target.
+    await loadFromBytes(result.bytes, result.path ?? result.name, "main");
   };
 
   const handleOpenSrc = async () => {
-    const path = await dialogOpen({ title: "Open Source PDF", filters: [{ name: "PDF", extensions: ["pdf"] }] });
-    if (path && typeof path === "string") await loadFromPath(path, "src");
+    const result = await openPdfFile("Open Source PDF");
+    if (!result) return;
+    await loadFromBytes(result.bytes, result.path ?? result.name, "src");
   };
 
   // -------------------------------------------------------------------------
   // Save
   // -------------------------------------------------------------------------
-  const writePdf = async (path: string) => {
+
+  /**
+   * Builds the merged PDF bytes from the current main-panel pages.
+   * Returns `null` (and logs an error) if something goes wrong.
+   */
+  const buildBytes = async (): Promise<Uint8Array | null> => {
     const pages = mainPagesRef.current;
-    if (!pages.length || saving) return;
+    if (!pages.length) return null;
+    try {
+      return await buildMergedPdf(pages);
+    } catch (err) {
+      console.error("Failed to build PDF:", err);
+      return null;
+    }
+  };
+
+  /**
+   * Save — behaviour differs by platform:
+   * - Tauri with a known path: ask for overwrite confirmation, then write.
+   * - Tauri without a path / any browser context: falls through to Save As.
+   */
+  const handleSave = async () => {
+    const path = mainFilePathRef.current;
+
+    // In the browser there is no "overwrite" concept — always use Save As.
+    if (!path || !isTauri()) {
+      await handleSaveAs();
+      return;
+    }
+
+    const fileName = path.split(/[/\\]/).pop() ?? path;
+    const confirmed = await confirmDialog(`Overwrite "${fileName}"?`, "Save");
+    if (!confirmed) return;
+
+    if (saving) return;
     setSaving(true);
     try {
-      const bytes = await buildMergedPdf(pages);
-      await writeFile(path, bytes);
-    } catch (err) {
-      console.error("Failed to save PDF:", err);
+      const bytes = await buildBytes();
+      if (bytes) await overwritePdfFile(path, bytes);
     } finally {
       setSaving(false);
     }
   };
 
-  const handleSave = async () => {
-    const path = mainFilePathRef.current;
-    if (!path) { await handleSaveAs(); return; }
-    const fileName = path.split(/[/\\]/).pop() ?? path;
-    const confirmed = await ask(`Overwrite "${fileName}"?`, { title: "Save", kind: "warning" });
-    if (!confirmed) return;
-    await writePdf(path);
-  };
-
+  /**
+   * Save As — opens a save dialog (Tauri) or triggers a download (browser).
+   * Updates `mainFilePath` with the chosen name so subsequent saves use it.
+   */
   const handleSaveAs = async () => {
-    const path = await dialogSave({
-      title: "Save PDF As",
-      filters: [{ name: "PDF", extensions: ["pdf"] }],
-      defaultPath: mainFilePathRef.current ?? "merged.pdf",
-    });
-    if (path) {
-      await writePdf(path);
-      setMainFilePath(path);
+    if (!mainPagesRef.current.length || saving) return;
+    setSaving(true);
+    try {
+      const bytes = await buildBytes();
+      if (!bytes) return;
+      const saved = await savePdfFile(bytes, mainFilePathRef.current ?? undefined);
+      if (saved) setMainFilePath(saved);
+    } finally {
+      setSaving(false);
     }
   };
 
   // -------------------------------------------------------------------------
-  // OS file-drop via Tauri window event
+  // OS file-drop
+  //
+  // Tauri: listen to the native window drag-drop event which provides file
+  //        paths; determine target panel by cursor position.
+  // Browser: handled by onDrop on each panel element (see JSX below).
   // -------------------------------------------------------------------------
   useEffect(() => {
-    const unlistenPromise = getCurrentWindow().onDragDropEvent(async (event) => {
-      if (event.payload.type !== "drop") return;
-      const { paths, position } = event.payload;
-      const pdfPaths = paths.filter(p => p.toLowerCase().endsWith(".pdf"));
-      if (!pdfPaths.length) return;
-      const panel: Panel = position.x < window.innerWidth / 2 ? "main" : "src";
-      await loadFromPath(pdfPaths[0], panel);
-    });
-    return () => { unlistenPromise.then(fn => fn()); };
+    if (!isTauri()) return;
+
+    let unlisten: (() => void) | null = null;
+
+    (async () => {
+      const { getCurrentWindow } = await import("@tauri-apps/api/window");
+      const { readFile } = await import("@tauri-apps/plugin-fs");
+      unlisten = await getCurrentWindow().onDragDropEvent(async (event) => {
+        if (event.payload.type !== "drop") return;
+        const { paths, position } = event.payload;
+        const pdfPaths = paths.filter(p => p.toLowerCase().endsWith(".pdf"));
+        if (!pdfPaths.length) return;
+        const panel: Panel = position.x < window.innerWidth / 2 ? "main" : "src";
+        const bytes = await readFile(pdfPaths[0]);
+        await loadFromBytes(bytes, pdfPaths[0], panel);
+      });
+    })();
+
+    return () => { unlisten?.(); };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -252,6 +305,29 @@ export default function App() {
     e.preventDefault();
     e.dataTransfer.dropEffect = "copy";
   };
+
+  // -------------------------------------------------------------------------
+  // Browser file-drop handlers (used only in non-Tauri context)
+  //
+  // Tauri intercepts OS drag-drop at the window level (see useEffect above)
+  // so these onDrop handlers are effectively a no-op in that environment.
+  // In a plain browser they are the primary way to open files by dropping.
+  // -------------------------------------------------------------------------
+  const makePanelDropHandler = (panel: Panel) => async (e: React.DragEvent) => {
+    e.preventDefault(); // always prevent browser default (navigating to dropped file)
+    if (_drag) return; // internal thumbnail drag — already handled elsewhere
+    const files = Array.from(e.dataTransfer.files).filter(f =>
+      f.name.toLowerCase().endsWith(".pdf"),
+    );
+    if (!files.length) return;
+    const buffer = await files[0].arrayBuffer();
+    await loadFromBytes(new Uint8Array(buffer), files[0].name, panel);
+  };
+
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const handleMainDrop = useCallback(makePanelDropHandler("main"), [loading]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const handleSrcDrop  = useCallback(makePanelDropHandler("src"),  [loading]);
 
   // -------------------------------------------------------------------------
   // Selection
@@ -347,7 +423,7 @@ export default function App() {
       <div className="panels">
 
         {/* LEFT - main document */}
-        <div className="panel" onDragOver={handlePanelFileDrag} onDragEnter={handlePanelFileDrag}>
+        <div className="panel" onDragOver={handlePanelFileDrag} onDragEnter={handlePanelFileDrag} onDrop={handleMainDrop}>
           <div className="panel-header">
             <span className="panel-title">{mainLabel}</span>
             <div className="panel-header-actions">
@@ -369,7 +445,7 @@ export default function App() {
                 className="panel-btn"
                 onClick={handleSave}
                 disabled={!mainPages.length || busy}
-                title={mainFilePath ? `Overwrite ${mainLabel}` : "Save As..."}
+                title={isTauri() && mainFilePath ? `Overwrite ${mainLabel}` : "Download as PDF"}
               >
                 {saving ? "Saving..." : "Save"}
               </button>
@@ -421,7 +497,7 @@ export default function App() {
         </div>
 
         {/* RIGHT - source document */}
-        <div className="panel source-panel" onDragOver={handlePanelFileDrag} onDragEnter={handlePanelFileDrag}>
+        <div className="panel source-panel" onDragOver={handlePanelFileDrag} onDragEnter={handlePanelFileDrag} onDrop={handleSrcDrop}>
           <div className="panel-header">
             <span className="panel-title">Source Document</span>
             <div className="panel-header-actions">
