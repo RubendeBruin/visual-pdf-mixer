@@ -1,5 +1,5 @@
 import * as pdfjs from 'pdfjs-dist';
-import { PDFDocument } from 'pdf-lib';
+import { PDFDocument, PDFPage } from 'pdf-lib';
 
 // Set up the PDF.js worker using Vite's asset URL handling
 pdfjs.GlobalWorkerOptions.workerSrc = new URL(
@@ -55,22 +55,58 @@ export async function loadPdfPages(bytes: Uint8Array): Promise<PageEntry[]> {
 
 /**
  * Merges an ordered array of PageEntry values into a single PDF.
- * Caches PDFDocument instances so each source file is only parsed once.
+ *
+ * Pages from the same source document are copied in a single `copyPages` call
+ * so that pdf-lib's internal deduplication cache (PDFObjectCopier) is shared
+ * across all of those pages.  Without this batching, shared resources such as
+ * embedded fonts and images are written into the output once per page that
+ * references them, which can make the merged file substantially larger than
+ * the sum of the source files.
  */
 export async function buildMergedPdf(pages: PageEntry[]): Promise<Uint8Array> {
   const dest = await PDFDocument.create();
 
-  // Cache parsed source documents keyed by the bytes reference
+  // Cache parsed source documents keyed by the bytes reference.
   const cache = new Map<Uint8Array, PDFDocument>();
-
   for (const entry of pages) {
-    let src = cache.get(entry.pdfBytes);
-    if (!src) {
-      src = await PDFDocument.load(entry.pdfBytes);
-      cache.set(entry.pdfBytes, src);
+    if (!cache.has(entry.pdfBytes)) {
+      cache.set(entry.pdfBytes, await PDFDocument.load(entry.pdfBytes));
     }
-    const [copied] = await dest.copyPages(src, [entry.pageIndex]);
-    dest.addPage(copied);
+  }
+
+  // Group the requested pages by source document while remembering the
+  // position each page must occupy in the final output.
+  // Using the pdfBytes reference as the map key guarantees that pages
+  // loaded from the same file share the same PDFDocument instance.
+  const batches = new Map<
+    Uint8Array,
+    Array<{ outputIndex: number; pageIndex: number }>
+  >();
+  for (let i = 0; i < pages.length; i++) {
+    const { pdfBytes, pageIndex } = pages[i];
+    let batch = batches.get(pdfBytes);
+    if (!batch) {
+      batch = [];
+      batches.set(pdfBytes, batch);
+    }
+    batch.push({ outputIndex: i, pageIndex });
+  }
+
+  // Copy all pages from each source in one call so that resources shared
+  // between pages (fonts, images, colour spaces, …) are only embedded once.
+  const copiedPages: PDFPage[] = new Array(pages.length);
+  for (const [sourceBytes, batch] of batches) {
+    const src = cache.get(sourceBytes)!;
+    const pageIndices = batch.map((b) => b.pageIndex);
+    const copied = await dest.copyPages(src, pageIndices);
+    for (let i = 0; i < batch.length; i++) {
+      copiedPages[batch[i].outputIndex] = copied[i];
+    }
+  }
+
+  // Add pages to the destination document in the order the user arranged them.
+  for (const page of copiedPages) {
+    dest.addPage(page);
   }
 
   return dest.save();
