@@ -37,6 +37,15 @@ export default function App() {
   const [isDragging, setIsDragging] = useState(false);
   const [dropIdx, setDropIdx] = useState<number | null>(null);
 
+  // Dialog shown when dropping fewer than all source pages, asking user
+  // whether to insert only the dragged selection or all source pages.
+  const [insertAllDialog, setInsertAllDialog] = useState<{
+    insertAt: number;
+    selectedIds: string[];
+    selectedCount: number;
+    totalCount: number;
+  } | null>(null);
+
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState<Panel | null>(null);
   const [mainFilePath, setMainFilePath] = useState<string | null>(null);
@@ -112,8 +121,24 @@ export default function App() {
         return;
       }
       const insertAt = computeInsertionIndex(e.clientY);
+      const allSrcPages = srcPagesRef.current;
       const idSet = new Set(drag.ids);
-      const toInsert = srcPagesRef.current
+      const selectedCount = allSrcPages.filter(p => idSet.has(p.id)).length;
+
+      // When only a subset of source pages is being dragged, ask the user
+      // whether to insert the selection or all source pages.
+      if (selectedCount > 0 && allSrcPages.length > selectedCount) {
+        setInsertAllDialog({
+          insertAt,
+          selectedIds: drag.ids,
+          selectedCount,
+          totalCount: allSrcPages.length,
+        });
+        setDropIdx(null);
+        return;
+      }
+
+      const toInsert = allSrcPages
         .filter(p => idSet.has(p.id))
         .map(p => ({ ...p, id: crypto.randomUUID() }));
       if (toInsert.length) {
@@ -397,6 +422,38 @@ export default function App() {
   };
 
   // -------------------------------------------------------------------------
+  // Insert-all dialog handlers
+  // -------------------------------------------------------------------------
+
+  /** Called when the user picks "selected" or "all" from the insert dialog. */
+  const handleInsertDialogChoice = (insertAll: boolean) => {
+    if (!insertAllDialog) return;
+    const { insertAt, selectedIds } = insertAllDialog;
+    setInsertAllDialog(null);
+
+    const pages = srcPagesRef.current;
+    const idSet = new Set(selectedIds);
+    const toInsert = (insertAll ? pages : pages.filter(p => idSet.has(p.id)))
+      .map(p => ({ ...p, id: crypto.randomUUID() }));
+
+    if (toInsert.length) {
+      setMainPages(prev => {
+        const next = [...prev];
+        next.splice(insertAt, 0, ...toInsert);
+        return next;
+      });
+    }
+  };
+
+  /** Appends every source page to the end of the main document. */
+  const handleInsertAllAtEnd = () => {
+    const pages = srcPagesRef.current;
+    if (!pages.length) return;
+    const toInsert = pages.map(p => ({ ...p, id: crypto.randomUUID() }));
+    setMainPages(prev => [...prev, ...toInsert]);
+  };
+
+  // -------------------------------------------------------------------------
   // Zoom helpers
   // -------------------------------------------------------------------------
   const zoomIn  = (setZoom: React.Dispatch<React.SetStateAction<number>>, setFit: (v: boolean) => void) =>
@@ -515,6 +572,16 @@ export default function App() {
               <button className="panel-btn" onClick={handleOpenSrc} disabled={busy}>
                 {loading === "src" ? "Opening..." : "Open"}
               </button>
+              {srcPages.length > 0 && (
+                <button
+                  className="panel-btn"
+                  onClick={handleInsertAllAtEnd}
+                  disabled={busy}
+                  title="Append all source pages to the end of the main document"
+                >
+                  Insert All
+                </button>
+              )}
             </div>
           </div>
 
@@ -557,6 +624,39 @@ export default function App() {
         </div>
 
       </div>
+
+      {/* Insert-all dialog ------------------------------------------------ */}
+      {insertAllDialog && (
+        <div className="modal-overlay" onClick={() => setInsertAllDialog(null)}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <p className="modal-title">Insert pages</p>
+            <p className="modal-body">
+              Insert into position&nbsp;
+              <strong>{insertAllDialog.insertAt + 1}</strong> of the main document:
+            </p>
+            <div className="modal-actions">
+              <button
+                className="panel-btn modal-btn"
+                onClick={() => handleInsertDialogChoice(false)}
+              >
+                Selected pages ({insertAllDialog.selectedCount})
+              </button>
+              <button
+                className="panel-btn modal-btn modal-btn--primary"
+                onClick={() => handleInsertDialogChoice(true)}
+              >
+                All pages ({insertAllDialog.totalCount})
+              </button>
+              <button
+                className="panel-btn modal-btn modal-btn--cancel"
+                onClick={() => setInsertAllDialog(null)}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
