@@ -377,3 +377,68 @@ button:disabled {
 .page-list::-webkit-scrollbar-thumb:hover {
   background: #aaa;
 }
+
+/* ===================================================================
+   Insert-all modal dialog
+   =================================================================== */
+
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10000;
+}
+
+.modal {
+  background: #ffffff;
+  border-radius: 8px;
+  padding: 20px 24px;
+  min-width: 260px;
+  max-width: 380px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.25);
+}
+
+.modal-title {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: #1a1a1a;
+  margin-bottom: 8px;
+}
+
+.modal-body {
+  font-size: 0.82rem;
+  color: #555;
+  margin-bottom: 16px;
+  line-height: 1.5;
+}
+
+.modal-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.modal-btn {
+  width: 100%;
+  padding: 7px 14px !important;
+  font-size: 0.82rem !important;
+  text-align: center;
+}
+
+.modal-btn--primary {
+  background: #1a73e8 !important;
+  border-color: #1558b0 !important;
+  color: #fff !important;
+}
+.modal-btn--primary:hover:not(:disabled) {
+  background: #1558b0 !important;
+  border-color: #0f44a0 !important;
+}
+
+.modal-btn--cancel {
+  color: #888 !important;
+  border-color: #ddd !important;
+}
